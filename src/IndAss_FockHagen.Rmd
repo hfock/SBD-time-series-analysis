@@ -1,0 +1,100 @@
+---
+title: "Individual assignment SBD"
+author: "ENTER YOUR NAME HERE"
+date: "ADS, 2021-2022"
+mainfont: Arial
+fontsize: 12pt
+urlcolor: blue
+output:
+  html_document:
+    highlight: default
+    theme: paper
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    latex_engine: xelatex
+    toc: yes
+    toc_depth: '5'
+
+---
+# 0. Prepare
+
+$\blacktriangleright$ Load the R-packages you will use.
+
+```{r block0, echo=T, eval=F, message=F}
+library(fpp3)
+library(tseries)
+library(dplyr)    # alternatively, this also loads %>%
+library(knitr)
+```
+
+$\blacktriangleright$ Include R-code you used to load (and prepare) the data.
+
+```{r}
+set.seed(666)
+
+data <- read.csv("ESMdata/ESMdata.csv")
+
+create_date_time <- function(date, time) {
+  return(dmy_hms(paste(date, time, sep=" ")))
+} 
+
+data <- data %>% 
+  mutate(date_time = create_date_time(date, resptime_s)) %>% 
+  as_tsibble(index = date_time)
+data
+```
+
+# 1. General
+
+$\blacktriangleright$ To be able to use fpp3, the data have to be a tsibble object. If they aren't already, transform them. Describe the structure of this object.
+
+## 1.1. Describe your data
+
+Start with answering the following questions:
+
+$\blacktriangleright$ What is your outcome variable; how was it measured (how many times, how frequently, etc.)?
+
+$\blacktriangleright$ What are the predictor variable(s) you will consider? Why would this make sense as a predictor? 
+
+$\blacktriangleright$ What are the cause(s) you will consider? Why would this make sense as a cause?
+
+## 1.2. Visualize your data
+$\blacktriangleright$ Create a sequence plot of the data with the function autoplot(). Interpret the results.
+
+$\blacktriangleright$ Plot the autocorrelation function with the function acf(). Interpret the results.
+
+$\blacktriangleright$ Based on (basic) content knowledge about the variable, and these visualizations, is there reason to assume the data are non-stationary and/or that there is a seasonal component?
+
+# 2. Forecasting
+
+## 2.1. SARIMA modeling
+
+$\blacktriangleright$ Perform the Dickey-Fuller test. What is your conclusion?
+
+$\blacktriangleright$ Fit an (S)ARIMA model to the data; what is the order of the model that was selected? 
+
+$\blacktriangleright$ Check the residuals of the model using the function gg_tsresiduals(). What is your conclusion?
+
+## 2.2. Dynamic regression 
+$\blacktriangleright$ Include the predictor in an dynamic regression model (i.e., allow for (S)ARIMA residuals); what is the effect of the predictor? 
+
+$\blacktriangleright$ What order is the (S)ARIMA model for the residuals?  
+
+$\blacktriangleright$ Check the residuals of the model using the function gg_tsresiduals(). What is your conclusion?
+
+## 2.3. Forecasts
+$\blacktriangleright$ Choose a forecasting horizon, and indicate why this is a reasonable and interesting horizon to consider. 
+
+$\blacktriangleright$ Create forecasts based on the model without the predictor and plot these.
+
+$\blacktriangleright$ Create forecasts based on the model with the predictor and plot these.
+
+$\blacktriangleright$ Compare the plots of both forecasts (visually), and discuss how they are similar and/or different.
+
+# 3. Causal Modeling
+
+_TBA_
+
+
+---
