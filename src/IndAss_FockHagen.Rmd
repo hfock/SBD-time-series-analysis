@@ -1,6 +1,6 @@
 ---
 title: "Individual assignment SBD"
-author: "ENTER YOUR NAME HERE"
+author: "Hagen Aad Fock"
 date: "ADS, 2021-2022"
 mainfont: Arial
 fontsize: 12pt
@@ -11,38 +11,110 @@ output:
     theme: paper
     toc: yes
     toc_float: yes
+    bibliography: references.bib  
   pdf_document:
     latex_engine: xelatex
     toc: yes
     toc_depth: '5'
-
 ---
 # 0. Prepare
 
 $\blacktriangleright$ Load the R-packages you will use.
 
-```{r block0, echo=T, eval=F, message=F}
+```{r block0, echo=T, message=F}
 library(fpp3)
 library(tseries)
-library(dplyr)    # alternatively, this also loads %>%
+library(tidyverse)    # alternatively, this also loads %>%
 library(knitr)
+library(mice) # for missing data imputation
+library(VIM)
+library(expsmooth)
 ```
 
 $\blacktriangleright$ Include R-code you used to load (and prepare) the data.
 
-```{r}
+## 0.1 Checking for missing data
+
+```{r block1}
 set.seed(666)
 
-data <- read.csv("ESMdata/ESMdata.csv")
+esmdata <- read.csv("../ESMdata/ESMdata.csv")
 
+missing_values <- esmdata %>% 
+  summarize_all(funs(sum(is.na(.))/n())) %>% 
+  gather(key="feature", value="missing_pct")
+
+missing_values %>% 
+  ggplot(aes(x=reorder(feature,-missing_pct),y=missing_pct)) +
+  geom_bar(stat="identity",fill="red")+
+  coord_flip()+theme_bw()
+```
+
+
+```{r}
+missing_values[missing_values$missing_pct < 0.5,] %>% 
+  ggplot(aes(x=reorder(feature,-missing_pct),y=missing_pct)) +
+  geom_bar(stat="identity",fill="red")+
+  coord_flip()+theme_bw()
+```
+
+```{r}
+
+```
+
+
+As we can see there is a huge part of the data missing. In section 1.1. Describe your data is stated which variables I will use to predict the outcome variable. Luckily I only include variables that have an insignificant percentage of missing data. To impute the missing data I will use the package mice. 
+
+```{r block2, message=FALSE, warning=FALSE}
+relevant_variables <- c('date', 'resptime_s',  'concentrat',
+                        'mood_down', 
+                        'pat_concent', 
+                        'act_what1','act_enjoy',
+                        'phy_physact',
+                        'soc_who1')
+```
+
+```{r}
+
+mice_plot <- aggr(esmdata[,relevant_variables], col=c('navyblue','yellow'),
+                    numbers=TRUE, sortVars=TRUE,
+                    labels=names(selected_data), cex.axis=.7,
+                    gap=3, ylab=c("Missing data","Pattern"))
+```
+
+
+```{r, results='hide'}
+imputed_esmdata <- esmdata[,relevant_variables] %>% 
+  mice(m=5, maxit = 50, method = 'pmm', seed = 666) %>% 
+  complete()
+```
+
+```{r block3, message=FALSE}
+mice_plot <- aggr(imputed_data, col=c('navyblue','yellow'),
+                    numbers=TRUE, sortVars=TRUE,
+                    labels=names(imputed_data), cex.axis=.7,
+                    gap=3, ylab=c("Missing data","Pattern"))
+```
+
+Now that every missing data was imputed we can make the tsibble.
+
+```{r block4}
 create_date_time <- function(date, time) {
   return(dmy_hms(paste(date, time, sep=" ")))
 } 
+esmdata <- esmdata %>%
+  mutate(date_time = create_date_time(date, resptime_s))
 
-data <- data %>% 
+all_data <- esmdata %>%
+  as_tsibble(index = date_time)
+
+daily_record <- esmdata %>%
+  filter(!duplicated(esmdata$date)) %>% 
+  as_tsibble(index = date_time)
+
+narrowed_data <- imputed_esmdata  %>%
   mutate(date_time = create_date_time(date, resptime_s)) %>% 
   as_tsibble(index = date_time)
-data
 ```
 
 # 1. General
@@ -51,18 +123,87 @@ $\blacktriangleright$ To be able to use fpp3, the data have to be a tsibble obje
 
 ## 1.1. Describe your data
 
-Start with answering the following questions:
+Every variable that will be stated within this section was measured using a semi-random experience-sampling protocol. "The participant collected reports of momentary states up to 10 times a day over a period of 239 days." https://doi.org/10.1159/000441458
 
 $\blacktriangleright$ What is your outcome variable; how was it measured (how many times, how frequently, etc.)?
 
+"Depression is a mood disorder that causes a persistent feeling of sadness and loss of interest. Also called major depressive disorder or clinical depression, it affects how you feel, think and behave and can lead to a variety of emotional and physical problems. You may have trouble doing normal day-to-day activities, and sometimes you may feel as if life isn't worth living." https://www.mayoclinic.org/diseases-conditions/depression/symptoms-causes/syc-20356007
+
+Regarding the information from the article about depression I derived following variables as potential outcome variables:
+
+- `mood_down` - I feel down
+- `mood_anxious` - I feel anxious
+- `mood_irritat` - I feel irritated
+- `mood_enthus` - I feel enthusiastic
+- `mood_doubt` - I feel indecisive
+- `pat_concent` - I can concentrate well
+- `se_handle` - I can handle anything
+
 $\blacktriangleright$ What are the predictor variable(s) you will consider? Why would this make sense as a predictor? 
 
+- `phy_physact` From the last beep onwards I was physically active
+- `concentrat` Concentration of anti-depressant
+- `se_handle` I can handle anything
+- `act_what1` What am I doing (right before the beep)?
+- `se_selfdoub` I doubt myself
+- `phy_dizzy` I feel dizzy
+
+
 $\blacktriangleright$ What are the cause(s) you will consider? Why would this make sense as a cause?
+
+- `soc_who1` Who am I with?
+- `phy_physact` From the last beep onwards I was physically active
+- `act_what1` What am I doing (right before the beep)?
+- `act_difficul` This (activity) requires effort
+- `act_well` I am good at this
+- `act_enjoy` I like doing this
+- `phy_pain` I am in pain
+- `phy_tired` I am tired
+
+```{r}
+missing_values[missing_values$missing_pct < 0.20,]$feature
+```
+
 
 ## 1.2. Visualize your data
 $\blacktriangleright$ Create a sequence plot of the data with the function autoplot(). Interpret the results.
 
+```{r block5}
+autoplot(narrowed_data, mood_down) +
+  labs(title = "Depression records (all samples)",
+       subtitle = "Mood of patiant",
+       y = "Feeling down [-3(not), 3(very)]")
+
+autoplot(daily_record, mood_down) +
+  labs(title = "Depression records (all samples)",
+       subtitle = "Mood of patiant",
+       y = "Feeling down [-3(not), 3(very)]")
+```
+
+- We can see that there are by far more "felling down" samples then "feeling uplifted" samples.
+- We can also recognize that the second section of the time series has more extreme values then the first section.
+- There are only three samples where the patent was extremely uplifted.
+- It seems like the patent had balanced feelings in the first section and one-sided feelings towards "feeling down" in the second section.
+- We can see periods where one emotion is more present. For example the patent felt down just at the beginning of the trial.
+
 $\blacktriangleright$ Plot the autocorrelation function with the function acf(). Interpret the results.
+
+```{r}
+narrowed_data
+```
+
+```{r}
+narrowed_data
+```
+
+
+```{r}
+par(mfrow=c(2,2))
+acf(narrowed_data[4])
+acf(narrowed_data[5])
+acf(narrowed_data[7])
+acf(narrowed_data[8])
+```
 
 $\blacktriangleright$ Based on (basic) content knowledge about the variable, and these visualizations, is there reason to assume the data are non-stationary and/or that there is a seasonal component?
 
@@ -71,10 +212,35 @@ $\blacktriangleright$ Based on (basic) content knowledge about the variable, and
 ## 2.1. SARIMA modeling
 
 $\blacktriangleright$ Perform the Dickey-Fuller test. What is your conclusion?
+```{r}
+narrowed_data
+```
+
+```{r}
+# narrowed_data
+narrowed_data[!duplicated(narrowed_data$date),]
+```
+
+
+```{r}
+z <- c(narrowed_data$mood_down, narrowed_data$date_time)
+adf.test(z)
+```
 
 $\blacktriangleright$ Fit an (S)ARIMA model to the data; what is the order of the model that was selected? 
 
+```{r}
+narrowed_data %>% model(ARIMA(z)) -> fit_z
+report(fit_z)
+```
+
+
 $\blacktriangleright$ Check the residuals of the model using the function gg_tsresiduals(). What is your conclusion?
+
+```{r}
+gg_tsresiduals()
+```
+
 
 ## 2.2. Dynamic regression 
 $\blacktriangleright$ Include the predictor in an dynamic regression model (i.e., allow for (S)ARIMA residuals); what is the effect of the predictor? 
