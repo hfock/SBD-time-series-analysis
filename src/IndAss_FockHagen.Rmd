@@ -25,11 +25,14 @@ $\blacktriangleright$ Load the R-packages you will use.
 ```{r block0, echo=T, message=F}
 library(fpp3)
 library(tseries)
+library(expsmooth)
+
 library(tidyverse)    # alternatively, this also loads %>%
 library(knitr)
+
 library(mice) # for missing data imputation
 library(VIM)
-library(expsmooth)
+library(zoo)
 ```
 
 $\blacktriangleright$ Include R-code you used to load (and prepare) the data.
@@ -68,7 +71,10 @@ relevant.variables <- c('date', 'resptime_s',  'concentrat',
                         'phy_hungry', 'phy_tired', 'phy_pain', 'phy_dizzy', 
                         'phy_headache', 
                         
-                        'soc_who1', 'phy_physact', 'act_difficul', 
+                        'soc_enjoy_alone', 'soc_prefcomp', 
+                        'soc_pleasant', 'soc_prefalone',
+                        
+                        'phy_physact', 'act_difficul', 
                         'act_well', 'act_enjoy')
 data <- data[,relevant.variables]
 
@@ -78,9 +84,27 @@ mice.plot <- aggr(data[,relevant.variables], col=c('navyblue','yellow'),
                     gap=3, ylab=c("Missing data","Pattern"))
 ```
 
+```{r}
+# used this command to figure out the exact value of a variable
+# missing.values[missing.values$feature == 'soc_prefcomp',]$missing.pct
+```
+
 ```{r imputation, , echo=FALSE}
+# To cope with the high amount of missing data concerning soc_pleasant and soc_prefalone I came up with the conclusion to impute a neutral value 4 if the data is missing. All other approaches seem unfeasible.
+ImputeSocialMissings <- function(value) {
+  if (is.na(value)) {
+    return(4)
+  } else {
+    return(value)
+  }
+}
+data$soc_enjoy_alone <- sapply(data$soc_enjoy_alone, ImputeSocialMissings)
+data$soc_prefcomp <- sapply(data$soc_prefcomp, ImputeSocialMissings)
+data$soc_pleasant <- sapply(data$soc_pleasant, ImputeSocialMissings)
+data$soc_prefalone <- sapply(data$soc_prefalone, ImputeSocialMissings)
+
 # The mice package implements a method to deal with missing data. The package creates multiple imputations (replacement values) for multivariate missing data.
-# I assume that mice should be useful to deal with this missing data problem. Some variables are missing more often then others and I assume that mice should be capable to impute values that are within a feasible range.
+# I assume that mice should be useful to deal with most of this missing data problem. Some variables are missing more often then others and I assume that mice should be capable to impute values that are within a feasible range.
 data <- data %>% 
   mice(m=5, maxit = 50, method = 'pmm', seed = 666, printFlag = FALSE) %>% 
   complete()
@@ -93,30 +117,27 @@ mice.plot <- aggr(data, col=c('navyblue','yellow'),
                     gap=3, ylab=c("Missing data","Pattern"))
 ```
 
-Now that every missing data was imputed we can make the tsibble. I create the tsibble by aggregating the mean of every day. The records of a day varied within a range of 1 and 10. I assumed that within such a day with many records the patients mood must have changed a lot otherwise they wouldn't record that much. Deriving from this thought I assumed that having the mean of such a day is more feasible for my analysis then including such a rollercoaster ride.
+Now that every missing data was imputed we can make the tsibble. I create the tsibble by aggregating the mean of every day. The records of a day varied within a range of 1 and 10. I assumed that within such a day with many records the patients mood must have changed a lot otherwise they wouldn't record that much. Deriving from this thought I assumed that having the mean of such a day is more feasible for my analysis then including such a roller coaster ride.
 
 ```{r block4}
 
 data$date <- dmy(data$date)
-data <- aggregate(data[, 3:29], list(data$date), mean)
+data <- aggregate(data[, 3:32], list(data$date), mean)
 names(data)[1] <- 'date'
-
-# The scope of the soc_who1 attribute is very detailed. But before I want to dive into this topic in such a detailed manner I created the soc_who1_simple variable that indicates if the patient was with a person (1) or alone (0).
-Transform_soc_who1 <- function(soc_who1) {
-  return (if (soc_who1 > 0) 1 else 0)
-} 
-
-data$soc_who1_simple <- sapply(data$soc_who1, Transform_soc_who1)
 
 data <- data %>%
   as_tsibble(index = date)
+
+# There is no entry for 2012-12-15 therefore I impute the previous values.
+data <- tsibble::fill_gaps(data)
+data <- na.locf(na.locf(data),fromLast=TRUE)
 ```
 
 # 1. General
 
 $\blacktriangleright$ To be able to use fpp3, the data have to be a tsibble object. If they aren't already, transform them. Describe the structure of this object.
 
-A tsibble is a for time series optimized tibble. It has in addition an Index that has an inherent ordering from past to present. If there are implicit missing values they can be easily converted into explicit missing values with the `fill_gaps()` function. And around the tsibble is again a little tidyverse called `tidyverts` which includes a lot of libraries that are useful for time series analyses.
+A tsibble is time series optimized tibble. It has in addition an Index that has an inherent ordering from past to present. Also has a key variable so multiple time series are possible. If there are implicit missing values they can be easily converted into explicit missing values with the `fill_gaps()` function. And around the tsibble is again a little tidyverse called `tidyverts` which includes a lot of libraries that are useful for time series analyses.
 
 <https://tsibble.tidyverts.org/>
 
@@ -134,57 +155,57 @@ Regarding the information from the article about depression I came up with the a
 
 All considered variables are within the following table.
 
-+---------------------+------------------------------------------------------------------------------------------+------------------+--------------+
-| name                | description                                                                              | scale            | \~ missing % |
-+=====================+==========================================================================================+==================+==============+
-| `mood_relaxed`      | I feel relaxed                                                                           | positive ( 1, 7) | 0%           |
-+---------------------+------------------------------------------------------------------------------------------+------------------+--------------+
-| `mood_satisfi`      | I feel satisfied                                                                         | positive ( 1, 7) | 0.2%         |
-+---------------------+------------------------------------------------------------------------------------------+------------------+--------------+
-| `mood_enthus`       | I feel enthusiastic                                                                      | positive ( 1, 7) | 0.2%         |
-+---------------------+------------------------------------------------------------------------------------------+------------------+--------------+
-| `mood_cheerf`       | I feel cheerful                                                                          | positive ( 1, 7) | 0.2%         |
-+---------------------+------------------------------------------------------------------------------------------+------------------+--------------+
-| `mood_strong`       | I feel strong                                                                            | positive ( 1, 7) | 0.2%         |
-+---------------------+------------------------------------------------------------------------------------------+------------------+--------------+
-| `se_selflike`       | I like myself                                                                            | positive ( 1, 7) | 0.2%         |
-+---------------------+------------------------------------------------------------------------------------------+------------------+--------------+
-| `se_handle`         | I can handle anything                                                                    | positive ( 1, 7) | 0.3%         |
-+---------------------+------------------------------------------------------------------------------------------+------------------+--------------+
-| `positive_moods`    | Accumulated positive moods.                                                              | (-1, 1)          | artificial   |
-|                     |                                                                                          |                  |              |
-|                     | All variables with a 'positive ( 1, 7)' scale combined.                                  |                  |              |
-+---------------------+------------------------------------------------------------------------------------------+------------------+--------------+
-| `mood_irritat`      | I feel irritated                                                                         | negative ( 1, 7) | 0.2%         |
-+---------------------+------------------------------------------------------------------------------------------+------------------+--------------+
-| `mood_suspic`       | I feel suspicious                                                                        | negative ( 1, 7) | 0.2%         |
-+---------------------+------------------------------------------------------------------------------------------+------------------+--------------+
-| `mood_doubt`        | I feel indecisive                                                                        | negative ( 1, 7) | 0.2%         |
-+---------------------+------------------------------------------------------------------------------------------+------------------+--------------+
-| `se_ashamed`        | I am ashamed of myself                                                                   | negative ( 1, 7) | 0.3%         |
-+---------------------+------------------------------------------------------------------------------------------+------------------+--------------+
-| `se_selfdoub`       | I doubt myself                                                                           | negative ( 1, 7) | 0.3%         |
-+---------------------+------------------------------------------------------------------------------------------+------------------+--------------+
-| `negative_moods`    | Accumulated negative moods.                                                              | (-1, 1)          | artificial   |
-|                     |                                                                                          |                  |              |
-|                     | All variables with a 'negative ( 1, 7)' scale combined.                                  |                  |              |
-+---------------------+------------------------------------------------------------------------------------------+------------------+--------------+
-| `mood_down`         | I feel down                                                                              | negative (-3, 3) | 0.1%         |
-+---------------------+------------------------------------------------------------------------------------------+------------------+--------------+
-| `mood_lonely`       | I feel lonely                                                                            | negative (-3, 3) | 0.1%         |
-+---------------------+------------------------------------------------------------------------------------------+------------------+--------------+
-| `mood_anxious`      | I feel anxious                                                                           | negative (-3, 3) | 0.2%         |
-+---------------------+------------------------------------------------------------------------------------------+------------------+--------------+
-| `mood_guilty`       | I feel guilty                                                                            | negative (-3, 3) | 0.2%         |
-+---------------------+------------------------------------------------------------------------------------------+------------------+--------------+
-| `depressive_moods`  | Accumulated depressive moods.                                                            | (-1, 1)          | artificial   |
-|                     |                                                                                          |                  |              |
-|                     | All variables with a 'negative ( -3, 3)' scale combined.                                 |                  |              |
-+---------------------+------------------------------------------------------------------------------------------+------------------+--------------+
-| `depression_factor` | An accumulated factor that is an approximation to measure the depression.                | (-1, 1)          | artificial   |
-|                     |                                                                                          |                  |              |
-|                     | A combination of the variables `positive_moods`, `negative_moods` and `depressive_moods` |                  |              |
-+---------------------+------------------------------------------------------------------------------------------+------------------+--------------+
++---------------------+------------------------------------------------------------------------------------------+-----------+
+| name                | description                                                                              | scale     |
++=====================+==========================================================================================+===========+
+| `mood_relaxed`      | I feel relaxed                                                                           | \+(1, 7)  |
++---------------------+------------------------------------------------------------------------------------------+-----------+
+| `mood_satisfi`      | I feel satisfied                                                                         | \+(1, 7)  |
++---------------------+------------------------------------------------------------------------------------------+-----------+
+| `mood_enthus`       | I feel enthusiastic                                                                      | \+(1, 7)  |
++---------------------+------------------------------------------------------------------------------------------+-----------+
+| `mood_cheerf`       | I feel cheerful                                                                          | \+(1, 7)  |
++---------------------+------------------------------------------------------------------------------------------+-----------+
+| `mood_strong`       | I feel strong                                                                            | \+(1, 7)  |
++---------------------+------------------------------------------------------------------------------------------+-----------+
+| `se_selflike`       | I like myself                                                                            | \+(1, 7)  |
++---------------------+------------------------------------------------------------------------------------------+-----------+
+| `se_handle`         | I can handle anything                                                                    | \+(1, 7)  |
++---------------------+------------------------------------------------------------------------------------------+-----------+
+| `positive_moods`    | Accumulated positive moods.                                                              | (-1, 1)   |
+|                     |                                                                                          |           |
+|                     | All variables with a 'positive ( 1, 7)' scale combined.                                  |           |
++---------------------+------------------------------------------------------------------------------------------+-----------+
+| `mood_irritat`      | I feel irritated                                                                         | \-( 1, 7) |
++---------------------+------------------------------------------------------------------------------------------+-----------+
+| `mood_suspic`       | I feel suspicious                                                                        | \-( 1, 7) |
++---------------------+------------------------------------------------------------------------------------------+-----------+
+| `mood_doubt`        | I feel indecisive                                                                        | \-( 1, 7) |
++---------------------+------------------------------------------------------------------------------------------+-----------+
+| `se_ashamed`        | I am ashamed of myself                                                                   | \-( 1, 7) |
++---------------------+------------------------------------------------------------------------------------------+-----------+
+| `se_selfdoub`       | I doubt myself                                                                           | \-( 1, 7) |
++---------------------+------------------------------------------------------------------------------------------+-----------+
+| `negative_moods`    | Accumulated negative moods.                                                              | (-1, 1)   |
+|                     |                                                                                          |           |
+|                     | All variables with a 'negative ( 1, 7)' scale combined.                                  |           |
++---------------------+------------------------------------------------------------------------------------------+-----------+
+| `mood_down`         | I feel down                                                                              | \-(-3, 3) |
++---------------------+------------------------------------------------------------------------------------------+-----------+
+| `mood_lonely`       | I feel lonely                                                                            | \-(-3, 3) |
++---------------------+------------------------------------------------------------------------------------------+-----------+
+| `mood_anxious`      | I feel anxious                                                                           | \-(-3, 3) |
++---------------------+------------------------------------------------------------------------------------------+-----------+
+| `mood_guilty`       | I feel guilty                                                                            | \-(-3, 3) |
++---------------------+------------------------------------------------------------------------------------------+-----------+
+| `depressive_moods`  | Accumulated depressive moods.                                                            | (-1, 1)   |
+|                     |                                                                                          |           |
+|                     | All variables with a 'negative ( -3, 3)' scale combined.                                 |           |
++---------------------+------------------------------------------------------------------------------------------+-----------+
+| `depression_factor` | An accumulated factor that is an approximation to measure the depression.                | (-1, 1)   |
+|                     |                                                                                          |           |
+|                     | A combination of the variables `positive_moods`, `negative_moods` and `depressive_moods` |           |
++---------------------+------------------------------------------------------------------------------------------+-----------+
 
 Because of the different scales within the variables, I had to transform them to the same base. I decided if the highest score on its scale is towards a positive or a negative mood for every variable. Then I scaled them depending on my assumption towards a scale of -1 and 1, where a positive score represents a positive mood, and a negative score represents a negative mood.
 
@@ -218,7 +239,7 @@ NormalizeNegative33 <- function(atr) (
 ```
 
 ```{r}
-# mood_cat1 - assumed as positive moods
+# positive_moods
 data$mood_relaxed <- NormalizePositive17(data$mood_relaxed)
 data$mood_satisfi <- NormalizePositive17(data$mood_satisfi)
 data$mood_enthus <- NormalizePositive17(data$mood_enthus)
@@ -227,85 +248,92 @@ data$mood_strong <- NormalizePositive17(data$mood_strong)
 data$se_selflike <- NormalizePositive17(data$se_selflike)
 data$se_handle <- NormalizePositive17(data$se_handle)
 
-# mood_cat2 - assumed as negative moods
+data$positive_moods <- data$mood_relaxed + data$mood_satisfi +
+  data$mood_enthus + data$mood_cheerf + data$mood_strong + 
+  data$se_selflike + data$se_handle 
+
+data$positive_moods <- Normalize(data$positive_moods, 
+                                    min(data$positive_moods), 
+                                    max(data$positive_moods))
+
+# negative_moods
 data$mood_irritat <- NormalizeNegative17(data$mood_irritat)
 data$mood_suspic <- NormalizeNegative17(data$mood_suspic)
 data$mood_doubt <- NormalizeNegative17(data$mood_doubt)
 data$se_ashamed <- NormalizeNegative17(data$se_ashamed)
 data$se_selfdoub <- NormalizeNegative17(data$se_selfdoub)
 
-# mood_cat3 - assumed as depressive moods
-data$mood_down <- NormalizeNegative33(data$mood_down)
-data$mood_lonely <- NormalizeNegative33(data$mood_lonely)
-data$mood_anxious <- NormalizeNegative33(data$mood_anxious)
-data$mood_guilty <- NormalizeNegative33(data$mood_guilty)
-
-data$positive_moods <- data$mood_relaxed + data$mood_satisfi +
-  data$mood_enthus + data$mood_cheerf + data$mood_strong + 
-  data$se_selflike + data$se_handle 
-  
 data$negative_moods <- data$mood_irritat + data$mood_suspic + 
   data$mood_doubt + data$se_ashamed + data$se_selfdoub
-  
-data$depressive_moods <- data$mood_down + data$mood_lonely + 
-  data$mood_anxious + data$mood_guilty
-```
-
-After categorizing three different accumulated moods (`positive_moods`, `negative_moods`, `depressive_moods`) I accumulated and normalized each. Afterwards I added them together to the `depression_factor` and normalized the value again.
-
-```{r}
-data$positive_moods <- Normalize(data$positive_moods, 
-                                    min(data$positive_moods), 
-                                    max(data$positive_moods))
 
 data$negative_moods <- Normalize(data$negative_moods, 
                                     min(data$negative_moods), 
                                     max(data$negative_moods))
 
+# depressive_moods
+data$mood_down <- NormalizeNegative33(data$mood_down)
+data$mood_lonely <- NormalizeNegative33(data$mood_lonely)
+data$mood_anxious <- NormalizeNegative33(data$mood_anxious)
+data$mood_guilty <- NormalizeNegative33(data$mood_guilty)
+
+data$depressive_moods <- data$mood_down + data$mood_lonely + 
+  data$mood_anxious + data$mood_guilty
+
 data$depressive_moods <- Normalize(data$depressive_moods, 
                                     min(data$depressive_moods), 
                                     max(data$depressive_moods))
+```
 
+After categorizing three different accumulated moods (`positive_moods`, `negative_moods`, `depressive_moods`) I accumulated and normalized each. Afterwards I added them together to the `depression_factor` and normalized the value again.
+
+```{r}
 data$depression_factor <- data$positive_moods + data$negative_moods + 
   data$depressive_moods
 
 data$depression_factor <- Normalize(data$depression_factor, 
                                     min(data$depression_factor), 
                                     max(data$depression_factor))
-
-data
 ```
 
 $\blacktriangleright$ What are the predictor variable(s) you will consider? Why would this make sense as a predictor?
 
 I will chose all the variables that can be found in the next table.
 
-+-------------------+----------------------------------------------------------------+------------------+--------------+
-| name              | description                                                    | scale            | \~ missing % |
-+===================+================================================================+==================+==============+
-| `phy_hungry`      | I am hungry                                                    | negative ( 1, 7) | 0.3%         |
-+-------------------+----------------------------------------------------------------+------------------+--------------+
-| `phy_tired`       | I am tired                                                     | negative ( 1, 7) | 0.3%         |
-+-------------------+----------------------------------------------------------------+------------------+--------------+
-| `phy_chanegable`  | Physical conditions that can be changed.                       | (-1, 1)          | artificial   |
-|                   |                                                                |                  |              |
-|                   | Variables `phy_hungry` and `phy_tired` combined.               |                  |              |
-+-------------------+----------------------------------------------------------------+------------------+--------------+
-| `phy_pain`        | I am in pain                                                   | negative ( 1, 7) | 0.3%         |
-+-------------------+----------------------------------------------------------------+------------------+--------------+
-| `phy_dizzy`       | I feel dizzy                                                   | negative ( 1, 7) | 0.3%         |
-+-------------------+----------------------------------------------------------------+------------------+--------------+
-| `phy_headache`    | I have a headache                                              | negative ( 1, 7) | 0.3%         |
-+-------------------+----------------------------------------------------------------+------------------+--------------+
-| `phy_complain`    | Physical conditions that can be described as complains.        | (-1, 1)          | artificial   |
-|                   |                                                                |                  |              |
-|                   | Variables `phy_pain`, `phy_dizzy` and `phy_headache` combined. |                  |              |
-+-------------------+----------------------------------------------------------------+------------------+--------------+
-| `phy_physact`     | From the last beep on wards I was physically active            | positive ( 1, 7) | 3.4%         |
-+-------------------+----------------------------------------------------------------+------------------+--------------+
-| `soc_who1_simple` | Is the patient alone or in company                             | 0 = alone\       | artificial   |
-|                   |                                                                | 1 = in company   |              |
-+-------------------+----------------------------------------------------------------+------------------+--------------+
++-------------------+-------------------------------------------------------------------------------------------+-----------+
+| name              | description                                                                               | scale     |
++===================+===========================================================================================+===========+
+| `phy_hungry`      | I am hungry                                                                               | \-( 1, 7) |
++-------------------+-------------------------------------------------------------------------------------------+-----------+
+| `phy_tired`       | I am tired                                                                                | \-( 1, 7) |
++-------------------+-------------------------------------------------------------------------------------------+-----------+
+| `phy_chanegable`  | Physical conditions that can be changed.                                                  | (-1, 1)   |
+|                   |                                                                                           |           |
+|                   | Variables `phy_hungry` and `phy_tired` combined.                                          |           |
++-------------------+-------------------------------------------------------------------------------------------+-----------+
+| `phy_pain`        | I am in pain                                                                              | \-( 1, 7) |
++-------------------+-------------------------------------------------------------------------------------------+-----------+
+| `phy_dizzy`       | I feel dizzy                                                                              | \-( 1, 7) |
++-------------------+-------------------------------------------------------------------------------------------+-----------+
+| `phy_headache`    | I have a headache                                                                         | \-( 1, 7) |
++-------------------+-------------------------------------------------------------------------------------------+-----------+
+| `phy_complain`    | Physical conditions that can be described as complains.                                   | (-1, 1)   |
+|                   |                                                                                           |           |
+|                   | Variables `phy_pain`, `phy_dizzy` and `phy_headache` combined.                            |           |
++-------------------+-------------------------------------------------------------------------------------------+-----------+
+| `phy_physact`     | From the last beep on wards I was physically active                                       | \+(1, 7)  |
++-------------------+-------------------------------------------------------------------------------------------+-----------+
+| `soc_pleasant`    | I find this company pleasant.                                                             | \+(1, 7)  |
++-------------------+-------------------------------------------------------------------------------------------+-----------+
+| `soc_prefalone`   | I prefer to be alone.                                                                     | \-( 1, 7) |
++-------------------+-------------------------------------------------------------------------------------------+-----------+
+| `soc_enjoy_alone` | I enjoy to be alone.                                                                      | \+(1, 7)  |
++-------------------+-------------------------------------------------------------------------------------------+-----------+
+| `soc_prefcomp`    | I prefer being in company.                                                                | \-( 1, 7) |
++-------------------+-------------------------------------------------------------------------------------------+-----------+
+| `soc_factor`      | A factor that approximates the patients social needs.                                     | (-1, 1)   |
+|                   |                                                                                           |           |
+|                   | Variables `soc_pleasant`, `soc_prefalone`, `soc_enjoy_alone` and `soc_prefcomp` combined. |           |
++-------------------+-------------------------------------------------------------------------------------------+-----------+
 
 I assume that the physical variables are suitable to be used as predictor variables. I separated them into three variables the changeable physical conditions (`phy_chanegable`), the physical complains (`phy_complain`) and if the patient was physical active (`phy_physact`). `phy_chanegable` and `phy_complain` will be accumulated in the same manner as the artificial mood variables.
 
@@ -313,64 +341,76 @@ I think it makes sense to use `phy_chanegable` as a predictor because being tire
 The `phy_complain` variable makes also sense to be included as a predictor. Physical complains are obviously mood influential.\
 Doing sport (`phy_physact`) is also mood influential and thus also suitable to be used as predictor.
 
-I also assume being in company (`soc_who1_simple`) is also mood influential. Because of the high variety of the original variable (`soc_who1`) I simplified it into the `soc_who1_simple` variable. My assumption regarding this variable is that the patient pays less attention to himself when he is with other people and thus this should be considered a predictor variable. I have to admit that there also encounter that might positively or negativly influence the mood
+I also assume the social part (`soc_factor`) is a crucial factor to predict the mood. Therefore, it is added to be predictor variables.
+
+```{r}
+# phy_chanegable
+data$phy_hungry <- NormalizeNegative17(data$phy_hungry)
+data$phy_tired <- NormalizeNegative17(data$phy_tired)
+
+data$phy_chanegable <- data$phy_hungry + data$phy_tired
+
+data$phy_chanegable <- Normalize(data$phy_chanegable, 
+                                    min(data$phy_chanegable), 
+                                    max(data$phy_chanegable))
+
+# phy_complain
+data$phy_pain <- NormalizeNegative17(data$phy_pain)
+data$phy_dizzy <- NormalizeNegative17(data$phy_dizzy)
+data$phy_headache <- NormalizeNegative17(data$phy_headache)
+
+data$phy_complain <- data$phy_pain + data$phy_dizzy + data$phy_headache 
+
+data$phy_complain <- Normalize(data$phy_complain, 
+                                    min(data$phy_complain), 
+                                    max(data$phy_complain))
+
+# phy_physact
+data$phy_physact <- NormalizePositive17(data$phy_physact)
+
+# soc_factor
+data$soc_pleasant <- NormalizePositive17(data$soc_pleasant)
+data$soc_prefalone <- NormalizeNegative17(data$soc_prefalone)
+data$soc_enjoy_alone <- NormalizePositive17(data$soc_enjoy_alone)
+data$soc_prefcomp <- NormalizeNegative17(data$soc_prefcomp)
+
+data$soc_factor <- data$soc_pleasant + data$soc_prefalone + 
+  data$soc_enjoy_alone + data$soc_prefcomp
+
+data$soc_factor <- Normalize(data$soc_factor, 
+                                    min(data$soc_factor), 
+                                    max(data$soc_factor))
+```
 
 $\blacktriangleright$ What are the cause(s) you will consider? Why would this make sense as a cause?
 
 I assume that a human being is complex but an encapsulated system on its own. But the surrounding factors influence whatever happens within a person. So I assume all activities with the environment like meeting people or doing something actively must be the cause of how the human being feels and also everything a person takes to him influences the internal behavior.
 
-+------------------+---------------------------------------------------+------------------+--------------+
-| name             | description                                       | scale            | \~ missing % |
-+==================+===================================================+==================+==============+
-| `act_difficul`   | This (activity) requires effort                   | ( 1, 7)          | 3.4%         |
-+------------------+---------------------------------------------------+------------------+--------------+
-| `act_well`       | I am good at this                                 | ( 1, 7)          | 3.4%         |
-+------------------+---------------------------------------------------+------------------+--------------+
-| `act_complexity` | The complexity of a task.                         | (-1, 1)          | artificial   |
-|                  |                                                   |                  |              |
-|                  | Variables `act_difficul` and `act_well` combined. |                  |              |
-+------------------+---------------------------------------------------+------------------+--------------+
-| `act_enjoy`      | I like doing this                                 | positive ( 1, 7) | 3.4%         |
-+------------------+---------------------------------------------------+------------------+--------------+
++------------------+---------------------------------------------------------------+------------+
+| name             | description                                                   | scale      |
++==================+===============================================================+============+
+| `act_difficul`   | This (activity) requires effort                               | \-( 1, 7)  |
++------------------+---------------------------------------------------------------+------------+
+| `act_well`       | I am good at this                                             | \+(1, 7)   |
++------------------+---------------------------------------------------------------+------------+
+| `act_enjoy`      | I like doing this                                             | \+(1, 7)   |
++------------------+---------------------------------------------------------------+------------+
+| `act_complexity` | The complexity of a task.                                     | (-1, 1)    |
+|                  |                                                               |            |
+|                  | Variables `act_difficul`, `act_well` and `act_enjoy`combined. |            |
++------------------+---------------------------------------------------------------+------------+
 
 ```{r}
-
-
-# physical - described as all physical attributes
-data$phy_hungry <- NormalizeNegative17(data$phy_hungry)
-data$phy_tired <- NormalizeNegative17(data$phy_tired)
-data$phy_pain <- NormalizeNegative17(data$phy_pain)
-data$phy_dizzy <- NormalizeNegative17(data$phy_dizzy)
-data$phy_headache <- NormalizeNegative17(data$phy_headache)
-data$phy_physact <- NormalizePositive17(data$phy_physact)
-
-# activities - description of the activities 
-# data$act_difficul <- NormalizeNegative17(data$act_difficul)
+# act_complexity
+data$act_difficul <- NormalizeNegative17(data$act_difficul)
 data$act_well <- NormalizePositive17(data$act_well)
-data$act_difficul <- NormalizePositive17(data$act_difficul)
+data$act_enjoy <- NormalizePositive17(data$act_enjoy)
 
-```
+data$act_complexity <- data$act_difficul + data$act_well + data$act_enjoy
 
-```{r}
-
-
-data$depression_factor <- data$positive_moods + data$negative_moods + 
-  data$depressive_moods
-
-data$physical <- data$phy_hungry + data$phy_tired + data$phy_pain +
-  data$phy_dizzy + data$phy_headache
-
-data$activity <- data$act_well + data$act_difficul
-```
-
-```{r}
-data$physical <- Normalize(data$physical, 
-                                    min(data$physical), 
-                                    max(data$physical))
-
-data$activity <- Normalize(data$activity, 
-                                    min(data$activity), 
-                                    max(data$activity))
+data$act_complexity <- Normalize(data$act_complexity, 
+                                    min(data$act_complexity), 
+                                    max(data$act_complexity))
 ```
 
 ## 1.2. Visualize your data
@@ -384,14 +424,43 @@ autoplot(data, depression_factor) +
        y = "Feeling depressed")
 ```
 
+-   We can see that there is almost always a fluctuation between feeling and not feeling depressed. It seems like there are few or no existing stable phases.
+-   On almost every good day (feeling not depressed) a bad day (feeling depressed) is the follow up. The most extreme situations were in October and just before the January.
+-   We can also observe a more stable period at the beginning of the time plot regarding the score of depression factor. 
+-   It also seems that the spikes are getting more frequent towards the end of th plot and more towards a depressive mood. This might be due to the reduction of medication.
+-   The plot indicates that it is near random, so to say like white noise but it seems like there is some structure hidden.
+
 $\blacktriangleright$ Plot the autocorrelation function with the function acf(). Interpret the results.
 
 ```{r}
-# positive moods
-acf(data[32])
+acf(data[34])
 ```
 
+```{r}
+pacf(data[34])
+```
+
+
+```{r}
+data %>%
+  ACF(depression_factor) %>%
+  autoplot()
+```
+
+```{r}
+data %>%
+  PACF(depression_factor) %>%
+  autoplot()
+```
+
+Here we see that the autocorrelations at lags 1, 2, 3 and 12 are significantly larger than zero; this implies there are sequential dependencies in these data. which makes z_t 
+somewhat predictable from preceding observations (e.g., z_t-1).
+
+There are no signs of a trend or a unit root process, or of a changing variance; hence, the series seem stationary.
+
 $\blacktriangleright$ Based on (basic) content knowledge about the variable, and these visualizations, is there reason to assume the data are non-stationary and/or that there is a seasonal component?
+
+I am pretty certain that the data is stationary. Concerning the time plot and the autocorrelation I assume that we will find a weak seasonal component within this data.
 
 # 2. Forecasting
 
@@ -403,31 +472,59 @@ $\blacktriangleright$ Perform the Dickey-Fuller test. What is your conclusion?
 adf.test(data$depression_factor)
 ```
 
+The H0 (null=hypothesis) of this test is that there is a unit root process; Here the p-value obtained is very small, which would make us reject H0; hence, we conclude there is no evidence for a unit root process (i.e., there is no need to difference these data).
+
 $\blacktriangleright$ Fit an (S)ARIMA model to the data; what is the order of the model that was selected?
 
 ```{r}
-data <- tsibble::fill_gaps(data)
-fit_data <- model(data, ARIMA(depression_factor))
-report(fit_data)
+fit.data <- model(data, ARIMA(depression_factor))
+report(fit.data)
 ```
+
+This shows we get an ARIMA(1,0,2)
+
+$yt = 0.2506 - B0.36y + B0.605e + B^20.308e + e$
+
+
 
 $\blacktriangleright$ Check the residuals of the model using the function gg_tsresiduals(). What is your conclusion?
 
 ```{r}
-gg_tsresiduals(fit_data)
+gg_tsresiduals(fit.data)
 ```
 
+The residuals seem pretty stationary. Maybe with some little peaks towards a negative value. Nevertheless, that shouldn't effect the conclusion that they are stationary.
+
 ```{r}
-augment(fit_data)
+adf.test(augment(fit.data)$.resid)
 ```
+
+The residuals are stationary according to this test; this is in agreement with our conclusion based on the sequence plot of the residuals above.
+
+The acf has one signifcant value at lag 13.
+
+The histogram looks symmetric and normal. But to point out there is a stronger left tail. However, I assume that the tail is insignificant.
 
 ## 2.2. Dynamic regression
 
 $\blacktriangleright$ Include the predictor in an dynamic regression model (i.e., allow for (S)ARIMA residuals); what is the effect of the predictor?
 
+```{r}
+fit.data.soc <- model(data, ARIMA(depression_factor ~ soc_factor))
+fit.data.p <- model(data, ARIMA(depression_factor ~ soc_factor + phy_complain + 
+                                phy_chanegable + phy_physact))
+report(fit.data.p)
+```
+
+The predicor 
+
 $\blacktriangleright$ What order is the (S)ARIMA model for the residuals?
 
 $\blacktriangleright$ Check the residuals of the model using the function gg_tsresiduals(). What is your conclusion?
+
+```{r}
+gg_tsresiduals(fit.data)
+```
 
 ## 2.3. Forecasts
 
@@ -435,7 +532,21 @@ $\blacktriangleright$ Choose a forecasting horizon, and indicate why this is a r
 
 $\blacktriangleright$ Create forecasts based on the model without the predictor and plot these.
 
+```{r}
+fit.data %>% forecast(h=7) %>% autoplot(data)  
+```
+
 $\blacktriangleright$ Create forecasts based on the model with the predictor and plot these.
+
+```{r}
+new_data_depr <- new_data(data, 14) %>%
+  mutate(soc_factor = mean(data$soc_factor),
+         phy_complain = mean(data$phy_complain),
+         phy_chanegable = mean(data$phy_chanegable),
+         phy_physact = mean(data$phy_physact))
+forecast(fit.data.soc, new_data = new_data_depr) %>% 
+  autoplot(data)  
+```
 
 $\blacktriangleright$ Compare the plots of both forecasts (visually), and discuss how they are similar and/or different.
 
