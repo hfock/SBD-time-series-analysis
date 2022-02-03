@@ -27,12 +27,15 @@ library(fpp3)
 library(tseries)
 library(expsmooth)
 
-library(tidyverse)    # alternatively, this also loads %>%
+library(tidyverse) # alternatively, this also loads %>%
 library(knitr)
 
 library(mice) # for missing data imputation
 library(VIM)
 library(zoo)
+
+library(ggplot2)
+require(gridExtra)
 ```
 
 $\blacktriangleright$ Include R-code you used to load (and prepare) the data.
@@ -53,7 +56,7 @@ missing.values %>%
   coord_flip()+theme_bw()
 ```
 
-There are several variables that have a high percentage of missing data. Within my analysis I don't consider any variable that has a higher missing percentage then 3.4%. Except attributes with a soc\_ prefix. They are displayed with an high percentage of missing data but the missing data has a underlying structure.
+There are several variables that have a high missing data percentage. Highest missing data percentage I consider in my analysis is 3.4%. Except attributes with a soc\_ prefix. They are displayed with an high percentage of missing data but the missing data has a underlying structure.
 
 ```{r}
 relevant.variables <- c('date', 'resptime_s',  'concentrat',
@@ -92,9 +95,10 @@ mice.plot <- aggr(data[,relevant.variables], col=c('navyblue','yellow'),
 ## 0.2 Imputing missing data
 
 ```{r imputation, , echo=FALSE}
+# Whenever the patient didn't meet anybody he skipped the soc\_ prefix vars.
 # To cope with the high amount of missing data concerning soc_pleasant and 
 # soc_prefalone I came up with the conclusion to impute a neutral value 4 if 
-# the data is missing. All other approaches seem unfeasible.
+# the data is missing. The 4 indicates a neutral value.
 ImputeSocialMissings <- function(value) {
   if (is.na(value)) {
     return(4)
@@ -111,8 +115,7 @@ data$soc_prefalone <- sapply(data$soc_prefalone, ImputeSocialMissings)
 # The package creates multiple imputations (replacement values) 
 # for multivariate missing data.
 
-# I assume that mice should be useful to deal with most of this 
-# missing data problem. Some variables are missing more often then others and 
+# Some variables are missing more often then others and 
 # I assume that mice should be capable to impute values that are 
 # within a feasible range.
 data <- data %>% 
@@ -161,7 +164,7 @@ The data is about a man that was reducing his anti depression medication. Every 
 
 $\blacktriangleright$ What is your outcome variable; how was it measured (how many times, how frequently, etc.)?
 
-The components of my outcome variable were measured at least everyday over 239 days and also sometimes sub daily. The total amount of measurements is approximately 1470 times.
+The components of my outcome variable were measured at least everyday (except 2012-12-15) over 239 days and also sometimes sub daily. The total amount of measurements is approximately 1470 times.
 
 Regarding the information from the article about depression I came up with the assumption that the best way to measure a depression is to observe the patients mood. Because there is such a variety of positive and negative moods I mixed them up in an overall variable called `depression_factor`.
 
@@ -198,7 +201,7 @@ All considered variables are within the following table.
 +---------------------+------------------------------------------------------------------------------------------+-----------+
 | `se_selfdoub`       | I doubt myself                                                                           | \-(1, 7)  |
 +---------------------+------------------------------------------------------------------------------------------+-----------+
-| `negative_moods`    | Accumulated negative moods.                                                              | \-(-1, 1) |
+| `negative_moods`    | Accumulated negative moods.                                                              | \+(-1, 1) |
 |                     |                                                                                          |           |
 |                     | All variables with a 'negative (1, 7)' scale combined.                                   |           |
 +---------------------+------------------------------------------------------------------------------------------+-----------+
@@ -210,7 +213,7 @@ All considered variables are within the following table.
 +---------------------+------------------------------------------------------------------------------------------+-----------+
 | `mood_guilty`       | I feel guilty                                                                            | \-(-3, 3) |
 +---------------------+------------------------------------------------------------------------------------------+-----------+
-| `depressive_moods`  | Accumulated depressive moods.                                                            | \-(-1, 1) |
+| `depressive_moods`  | Accumulated depressive moods.                                                            | \+(-1, 1) |
 |                     |                                                                                          |           |
 |                     | All variables with a 'negative (-3, 3)' scale combined.                                  |           |
 +---------------------+------------------------------------------------------------------------------------------+-----------+
@@ -300,6 +303,8 @@ data$depressive_moods <- Normalize(data$depressive_moods,
 
 After categorizing three different accumulated moods (`positive_moods`, `negative_moods`, `depressive_moods`) I accumulated and normalized each. Afterwards I added them together to the `depression_factor` and normalized the value again.
 
+The normalization for every mood type on its own was an attempt to mitigate the bias that is aggregated by mixing all the variables. For example if there are 7 positive moods and 5 negative moods and I would add them together I would get a biased result towards the positive mood. Thus I normalized every mood categorie towards (-1, 1) and added them afterwards.
+
 ```{r}
 data$depression_factor <- data$positive_moods + data$negative_moods + 
   data$depressive_moods
@@ -311,7 +316,9 @@ data$depression_factor <- Normalize(data$depression_factor,
 
 $\blacktriangleright$ What are the predictor variable(s) you will consider? Why would this make sense as a predictor?
 
-I will chose all the variables that can be found in the next table.
+All considered variables are within the following table. Every variable I consider as a predictor is related to physical well being or physical activity. The variables can be found in the following table.
+Again I aggregated three variables the changeable physical conditions (`phy_chanegable`), the physical complains (`phy_complain`) and if the patient was physical active (`phy_physact`). 
+`phy_chanegable` and `phy_complain` were processed the same way as the outcome variable, whereby the `phy_physact` only had to be normalized.
 
 +------------------+----------------------------------------------------------------+------------+
 | name             | description                                                    | scale      |
@@ -337,14 +344,12 @@ I will chose all the variables that can be found in the next table.
 | `phy_physact`    | From the last beep on wards I was physically active            | \+(1, 7)   |
 +------------------+----------------------------------------------------------------+------------+
 
-I assume that the physical variables are suitable to be used as predictor variables. I separated them into three variables the changeable physical conditions (`phy_chanegable`), the physical complains (`phy_complain`) and if the patient was physical active (`phy_physact`). `phy_chanegable` and `phy_complain` will be accumulated in the same manner as the artificial mood variables.
+I think it makes sense to use `phy_chanegable` as a predictor because being tired or hungry are feelings that constantly influences the mood. Just as an example, the definition of the word 'hangry' is 'irritable or angry because of hunger'. <https://www.merriam-webster.com/dictionary/hangry> Also having had bad sleep can trigger a bad mood.
+The `phy_complain` variable makes also sense to be included as a predictor. Physical complains are also mood influential. For example, waking up with tooth pain is instantly getting attention after waking up and thus there is concentration loss to other things and a bad influence towards the thoughts that come to mind. In conclusion, this creates a bad mood.
 
-I think it makes sense to use `phy_chanegable` as a predictor because being tired or hungry are feelings that constantly influences the mood. Just as an example, the definition of the word 'hangry' is 'irritable or angry because of hunger'. <https://www.merriam-webster.com/dictionary/hangry> And having a bad sleep can trigger a bad mood.\
-The `phy_complain` variable makes also sense to be included as a predictor. Physical complains are obviously mood influential.
+Doing sport (`phy_physact`) is also mood influential and thus also suitable to be used as predictor. For example if you managed to do an exhausting workout the rest of the day is accompanied with a sense of well being and pride.
 
-Doing sport (`phy_physact`) is also mood influential and thus also suitable to be used as predictor.
-
-At the end I could also account all my predictors as cause variables if I understood the difference between predictors and cause right. Nevertheless, I chose them to be a predictor.
+At the end I could also account all my predictors as cause variables if I understood the difference between predictors and cause right. Nevertheless, I chose them to be my predictors withtin this assignment.
 
 ```{r}
 # phy_chanegable
@@ -374,7 +379,7 @@ data$phy_physact <- NormalizePositive17(data$phy_physact)
 
 $\blacktriangleright$ What are the cause(s) you will consider? Why would this make sense as a cause?
 
-A human being is complex. The surrounding factors influence whatever happens within a person. Concluding, I assume all interactions between a human being and its environment must strongly influence its mood. Therefore, I chose social factor as my cause variable.
+A human being is complex. Under my premise, the surrounding factors influence whatever happens within a person. Concluding, I assume all interactions between a human being and its environment must strongly influence its mood. Therefore, I chose social factor as my cause variable.
 
 +-------------------+-------------------------------------------------------------------------------------------+-----------------+
 | name              | description                                                                               | scale           |
@@ -418,9 +423,9 @@ autoplot(data, depression_factor) +
        y = "Feeling depressed")
 ```
 
--   We can see that there is almost always a fluctuation between feeling and not feeling depressed. It seems like there are few or no existing stable phases.
+-   We can see that there is almost always a fluctuation between feeling and not feeling depressed. It seems like there are few or non existing stable phases.
 -   On almost every good day (feeling not depressed) a bad day (feeling depressed) is the follow up. The most extreme situations were in October and just before the January.
--   We can also observe a more stable period at the beginning of the time plot regarding the score of depression factor.
+-   We can also observe a more stable period at the beginning of the time plot regarding the score of depression factor. So to say assuming the 0 score is a neutral mood it only dips below that threshold in few occasions and then only a little beyond it.
 -   It also seems that the spikes are getting more frequent towards the end of th plot and more towards a depressive mood. This might be due to the reduction of medication.
 -   The plot indicates that it is near random, so to say like white noise but it seems like there is some structure hidden.
 
@@ -430,13 +435,15 @@ $\blacktriangleright$ Plot the autocorrelation function with the function acf().
 acf(data[34])
 ```
 
-Here we see that the autocorrelations at lags 1, 2, 3 and 12 are significantly larger than zero; this implies there are sequential dependencies in these data. which makes z_t somewhat predictable from preceding observations (e.g., z_t-1).
+The relationship between a current value and a lagged value is measured by applying autocorrelation. A significant value in the plot is marked as a line crossing the blue dotted threshold. Such a significant value tells us that the past influences the future value, and therefore, we can use it for forecasting. 
+
+Here we see that the autocorrelations at lags 1, 2, 3 and 12 are significantly larger than zero; this implies there are sequential dependencies in these data. Which makes z_t somewhat predictable from preceding observations (e.g., z_t-1).
 
 There are no signs of a trend or a unit root process, or of a changing variance; hence, the series seem stationary.
 
 $\blacktriangleright$ Based on (basic) content knowledge about the variable, and these visualizations, is there reason to assume the data are non-stationary and/or that there is a seasonal component?
 
-I am pretty certain that the data is stationary. Concerning the time plot and the autocorrelation I assume that we will find a weak seasonal component within this data.
+I am pretty certain that the data is stationary. Concerning the time plot and the autocorrelation I wouldn't wonder if we find a weak seasonal component within this data.
 
 # 2. Forecasting
 
@@ -448,7 +455,10 @@ $\blacktriangleright$ Perform the Dickey-Fuller test. What is your conclusion?
 adf.test(data$depression_factor)
 ```
 
-The H0 (null=hypothesis) of this test is that there is a unit root process; Here the p-value obtained is very small, which would make us reject H0; hence, we conclude there is no evidence for a unit root process (i.e., there is no need to difference these data).
+H0: The time series is non-stationary.  -> unit root process
+H1: The time series is stationary.
+
+Here the p-value obtained is very small, which would make us reject H0. Hence, we conclude there is no evidence for a unit root process (i.e., there is no need to difference these data).
 
 $\blacktriangleright$ Fit an (S)ARIMA model to the data; what is the order of the model that was selected?
 
@@ -458,6 +468,9 @@ report(fit.data)
 ```
 
 This shows we get an ARIMA(1,0,2)
+p = 1 -> AR(1) model, an autoregressive model of order p.
+d = 0 -> no seasonal part discovered.
+q = 2 -> MA(2) model, a moving average model of order q.  
 
 $yt = 0.2506 - B0.36y + B0.605e + B^20.308e + e$
 
@@ -467,13 +480,13 @@ $\blacktriangleright$ Check the residuals of the model using the function gg_tsr
 gg_tsresiduals(fit.data)
 ```
 
-Looking at the innovation residuals it is visible that there are some peaks frequently emerging within the timeline. Nevertheless, the mean seems to be stable but the variation has a slight increase over time.
+Looking at the innovation residuals it is visible that there are some peaks frequently emerging within the timeline. Nevertheless, the mean seems to be stable whereas the variation has a slight increase over time.
 
-Concerning the autocorrelation we see one lag #12 with a value above the blue dotted line for significant value threshold. Whereas three other lags #6, #13 and #23 are just touching the blue dotted line.
+Concerning the autocorrelation we see significant value at lag #12 with a value above the blue dotted line. Whereas three other lags #6, #13 and #23 are just touching the blue dotted line.
 
-Regarding the histogram there is a little shift to the right concerning the distribution.
+Regarding the histogram there is a little shift towards the right.
 
-In conclusion I can imagine that there might be transformations or different models that lead to improvements. Nevertheless I assume that the current situation is within a feasible spectrum to be able to proceed without any transformation or change of model.
+In conclusion, it is imaginable that there might be transformations or different models that lead to improvements by deriving more data from the residuals. Nevertheless, I assume that the current situation is within a feasible spectrum to proceed with the forecasting.
 
 ## 2.2. Dynamic regression
 
@@ -482,18 +495,20 @@ $\blacktriangleright$ Include the predictor in an dynamic regression model (i.e.
 ```{r}
 fit.data.p <- model(data, ARIMA(depression_factor ~ phy_complain + 
                                   phy_chanegable + 
-                                  phy_physact + 
-                                  soc_factor))
+                                  phy_physact))
 report(fit.data.p)
 ```
 
-We see that `soc_factor`, `phy_complain`, `phy_chanegable` and `phy_physact` are positive predictors for the depression factor.
+We see that `phy_complain`, `phy_chanegable` and `phy_physact` are positive predictors for the depression factor.
 
 $\blacktriangleright$ What order is the (S)ARIMA model for the residuals?
 
-The residuals are estimated to be an ARIMA(0,1,3) process;
+This shows we get an ARIMA(0,1,3)
+p = 0 -> AR(0) model, an autoregressive model of order p.
+d = 1 -> a seasonal part was discovered but without an indication in which seasonality they appear.
+q = 3 -> MA(3) model, a moving average model of order q.  
 
-One remarkable thing is that the ARIMA model including predictors is now without an autoregressive model component and involved one degree of first differencing.
+One remarkable thing is that the ARIMA model including predictors is now without an autoregressive model component and involved one degree of seasonality.
 
 $\blacktriangleright$ Check the residuals of the model using the function gg_tsresiduals(). What is your conclusion?
 
@@ -501,19 +516,19 @@ $\blacktriangleright$ Check the residuals of the model using the function gg_tsr
 gg_tsresiduals(fit.data.p)
 ```
 
-The sequence plot indicates to be as stationary as from the previous model. Mean and variance seem to keep constant over time. Also again a slight increase of variance towards the end.
+The sequence plot indicates to be as stationary as from the previous model. Mean seems to be stable while the variance might have a slight increase over time. 
 
-Concerning the autocorrelation we see not a single lag exceeding the significant threshold.
+Concerning the autocorrelation we see again one significant value at lag 12 and two lags [6, 11] that barely touch the threshold.
 
-Regarding the histogram the distribution seems almost perfectly balanced.
+Regarding the histogram there is again a slight right shift.
 
-In conclusion here is definitely no transformation or adaption of the model required.
+In conclusion, the model might have transformations or adaptions that lead to improvements, but I will assume that it is within a feasible spectrum to proceed with the forecast. 
 
 ## 2.3. Forecasts
 
 $\blacktriangleright$ Choose a forecasting horizon, and indicate why this is a reasonable and interesting horizon to consider.
 
-The forecasting horizon I chose is 1 week. Regarding the high fluctuation of the patents mood predicting one week seems already difficult. Also considering that the data does not even extend over one year. Also forecasting over one week seems to be not reasonable. And in the end one week seems to be an interesting horizon for a patient that has clinical depression.
+The forecasting horizon I chose is one week. Regarding the high fluctuation of the patents mood predicting one week seems already tricky. I was also considering that the data does not even extend over one year. In the end, one week seems to be an exciting horizon for a patient that has clinical depression. Considering the confidence interval might help calculate the risk of an extreme mood. 
 
 $\blacktriangleright$ Create forecasts based on the model without the predictor and plot these.
 
@@ -534,21 +549,34 @@ forecast(fit.data.p, new_data = new_data_depr) %>%
   autoplot(data)  
 ```
 
+```{r}
+temp_data <- tail(data, 7)
+
+forecast(fit.data.p, new_data = temp_data) %>% autoplot(data)
+```
+
+
 $\blacktriangleright$ Compare the plots of both forecasts (visually), and discuss how they are similar and/or different.
 
-Comparing both plots lead to the conclusion there is very little difference regarding the line progression. Both visualizations are predicting that the mood was from the beginning of the forecast a little over the average and therefore there is the decline towards a slightly lower level of the depression factor. The first model showed also a little bounce in a negative direction and then spring back to the level where the depression factor keeps stable.
+The first forecast shows a quick adaption of the line towards a mean value where it stabilize and the uncertainty interval is broader then more then a half of the whole scalar.
 
-There is additionally one difference. The uncertainty intervals of the second model is more dense then the first model.
+The second forecast where predictors are included. The values for the predictors are evaluated by their mean. 
+We can witness almost the same behavior of the forecast as in the first plot. The only difference is that the confidence interval is more narrow.
+
+Whereas the third forecast also includes the predictors, where the predictor-values were taken from the past, shows a significantly different forecast. We can see that the forecast mimics the actual value with one significant loss of anticipation when it comes to negative moods. As we can see towards the upbeat mood, the line is almost perfectly fitting, considering it forecasted a milder mood. Whereas the negative spike is almost not anticipated by the forecast at all. Even the spikes are almost exceeding the confidence interval. In conclusion, predictors that can account for the negative mood are not included in this model.
 
 # 3. Causal Modeling
 
 $\blacktriangleright$ Formulate a causal research question(s) involving the time series variable(s) you have measured.
 
-Does positive social experiences (soc_factor) lead to a better mood (depression_factor) in regards to the patient?
+Considering my data I have a big pool of variables that might have an impact on the patients mood. Thus I want to explore if the social experiences have a verifiable impact. 
+
+Does social experiences (soc_factor) have an verifiable impact on mood (depression_factor) in regards to a clinical depressive patient?
 
 $\blacktriangleright$ Which method we learned about in class (Granger causal approaches, interrupted time series, synthetic controls) is most appropriate to answer your research question using the data you have available? Why?
 
-In my case my data is not perfectly suitable to apply interrupted time series nor synthetic controls at all. There would be an possibility with the medication. However, I am afraid that by using one of the two methods mentioned, a result will come out, which in the end would be a confidence interval within the values and at most an indication in the direction of less fluctuation than anything else.
+The used data is unsuitable for applying interrupted time series or synthetic controls. Despite there is an intervention by reducing and eventually cutting all medications. However, I am afraid that by using one of the two methods mentioned, a result will come out, which would be a confidence interval within the values and at most an indication in the direction of less fluctuation than anything else.
+Nevertheless the cause I want to investigate is the social experiences and as far as I know no intervention happened within this variable.
 
 Concluding I choose the Granger causal approach to figure out if there is a Granger Causality between social experience and the mood.
 
@@ -556,9 +584,31 @@ Concluding I choose the Granger causal approach to figure out if there is a Gran
 
 Depending on the choice you made above, follow the questions outlined in 3.2a, 3.2b or 3.2c. If you chose a Granger causal analysis, it is sufficient to assess Granger causality in one direction only: you may evaluate a reciprocal causal relationship, but then answer each question below for both models.
 
+I do only investigate the Granger causality in the time flowing direction. 
+
 ### 3.2a Granger Causal analysis
 
 $\blacktriangleright$ Visualize your putative cause variable(s) $X$ and outcome variables $Y$.
+
+```{r}
+plot1 <- ggplot(data, aes(x="depression_factor", y=depression_factor)) + geom_boxplot()
+plot2 <- ggplot(data, aes(x="soc_factor", y=soc_factor)) + geom_boxplot()
+
+grid.arrange(plot1, plot2, ncol=2)
+```
+
+As we can see the Interquartile Range for depression_factor is ca. between 0 and 0.4 and for soc_factor is ca. between -0.05 and 0.45. So the IQR are not significantly different. By observing the depression_factor boxplot we can witness more outlier on negative mood end then on the positive mood end. By observing the soc_factor boxplot we only have negative outlier. 
+
+```{r}
+ggplot(data) + 
+  geom_line(aes(x = date, y= depression_factor, color='depression_factor')) +
+  geom_line(aes(x = date, y= soc_factor, color='soc_factor')) + 
+  labs(title = "Depression factor vs. Social factor",
+       subtitle = "Positive values indicate positive mood and social experiences; 
+       Negative values indicate negative mood and social experiences",
+       y = "Mood | Social experience")
+```
+
 
 ```{r}
 autoplot(data, depression_factor) +
@@ -570,7 +620,8 @@ autoplot(data, depression_factor) +
 ```{r}
 autoplot(data, soc_factor) +
   labs(title = "Accumulated Social Factor",
-       subtitle = "Negative values = unpleasant social experience; Positve values = pleasant social experience",
+       subtitle = "Negative values = unpleasant social experience; 
+       Positve values = pleasant social experience",
        y = "Social Factor")
 ```
 
@@ -582,32 +633,29 @@ Regarding dicky-fuller the soc_factor is also a stationary time series.
 
 $\blacktriangleright$ Train an appropriate ARIMA model on your outcome variable(s) $Y$, ignoring the putative cause variable(s) ($X$) but including, if appropriate, any additional covariates. If using the same model as fit in part 2, briefly describe that model again here.
 
+I used the same model with the predictors as in part 2.
+
 ```{r}
-fit.data.soc <- model(data, ARIMA(depression_factor ~ soc_factor))
-report(fit.data.soc)
+report(fit.data.p)
 ```
 
-ARIMA(p,d,q) = ARIMA(0,1,3)(1,0,0)[7]
-  Autoregressive model 0 
-  number of differencing 1
-  Movingaverage model 3
-  
-Due to the seasonal AR(1) part, the model has to regress the differenced score z_t on (z_t-7).
-  
-In short the appendix means (1,0,0)[7] is regaring the seasonal part and between brackets the amount of lag between seasons. 
+This shows we get an ARIMA(0,1,3)
+p = 0 -> AR(0) model, an autoregressive model of order p.
+d = 1 -> degree of one first differencing involved;
+q = 3 -> MA(3) model, a moving average model of order q.  
 
 
 ```{r}
-gg_tsresiduals(fit.data.soc)
+gg_tsresiduals(fit.data.p)
 ```
 
-The sequence plot indicates to be perfectly stationary. 
+The sequence plot indicates to be as stationary as from the previous model. Mean seems to be stable while the variance might have a slight increase over time. 
 
-Concerning the autocorrelation we see not a single lag exceeding the significant threshold.
+Concerning the autocorrelation we see again one significant value at lag 12 and two lags [6, 11] that barely touch the threshold.
 
-Regarding the histogram the distribution seems almost perfectly balanced.
+Regarding the histogram there is again a slight right shift.
 
-In conclusion here is definitely no transformation or adaption of the model required.
+In conclusion, the model might have transformations or adaptions that lead to improvements, but I will assume that it is within a feasible spectrum to proceed with the forecast. 
 
 $\blacktriangleright$ Justify what range of lags to consider for the lagged predictor(s). Use the CCF, but you may also justify this based on domain knowledge or substantive theory.
 
@@ -619,7 +667,7 @@ ccf(data$depression_factor, data$soc_factor,
 
 By applying cross-correlation function (CCF) an idea can be generated on which range of lags might be useful by encoding the lagged correlation between X and Y. 
 By moving to the left (starting lag 0) we find three significant correlations at lag -5, -6 and -12 and by moving to the rifght we find only one significant lag at position 6.
-Regrading also all my information gathered by this plot it makes sense to me to investigate until lag 7. I am not sure if it is feasible to assume that the influence of a social factor correlates on regular basis over 2 weeks. 
+Regrading also all my information gathered by this plot it makes sense to me to investigate until lag 7. I am not sure if it is feasible to assume that the influence of a social factor correlates over 2 weeks. Nevertheless, the significant lag 12 caught my interest. Thus I will investigate until lag 14.
 
 $\blacktriangleright$ Investigate whether adding your lagged "cause" variables ($X$) improve the prediction of your effect variable(s) $Y$. Use model selection based on information criteria. Describe your final chosen model.
 
@@ -627,38 +675,25 @@ $\blacktriangleright$ Investigate whether adding your lagged "cause" variables (
 
 fit <- data %>%
   # Restrict data so models use same fitting period
-  mutate(depression_factor = c(NA, NA, NA, NA, NA, NA, NA, depression_factor[8:239])) %>%
+  mutate(depression_factor = c(NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA,  
+                               depression_factor[15:239])) %>%
   # Estimate models
   model(
     indep = ARIMA(depression_factor),
-    lag1 = ARIMA(depression_factor~ lag(data$soc_factor)),
-    lag2 = ARIMA(depression_factor~ lag(data$soc_factor) + 
-                   lag(data$soc_factor,2)),
-    lag3 = ARIMA(depression_factor~ lag(data$soc_factor) + 
-                   lag(data$soc_factor,2) + 
-                   lag(data$soc_factor,3)),
-    lag4 = ARIMA(depression_factor~ lag(data$soc_factor) + 
-                   lag(data$soc_factor,2) + 
-                   lag(data$soc_factor,3) + 
-                   lag(data$soc_factor,4)),
-    lag5 = ARIMA(depression_factor~ lag(data$soc_factor) + 
-                   lag(data$soc_factor,2) + 
-                   lag(data$soc_factor,3) + 
-                   lag(data$soc_factor,4) + 
-                   lag(data$soc_factor,5)),
-    lag6 = ARIMA(depression_factor~ lag(data$soc_factor) + 
-                   lag(data$soc_factor,2) + 
-                   lag(data$soc_factor,3) + 
-                   lag(data$soc_factor,4) + 
-                   lag(data$soc_factor,5) + 
-                   lag(data$soc_factor,6)),
-    lag7 = ARIMA(depression_factor~ lag(data$soc_factor) + 
-                   lag(data$soc_factor,2) + 
-                   lag(data$soc_factor,3) + 
-                   lag(data$soc_factor,4) + 
-                   lag(data$soc_factor,5) + 
-                   lag(data$soc_factor,6) + 
-                   lag(data$soc_factor,7)),
+    lag1 = ARIMA(depression_factor ~ phy_complain + phy_chanegable + phy_physact + lag(data$soc_factor)),
+    lag2 = ARIMA(depression_factor ~ phy_complain + phy_chanegable + phy_physact +  lag(data$soc_factor) + lag(data$soc_factor,2)),
+    lag3 = ARIMA(depression_factor ~ phy_complain + phy_chanegable + phy_physact +  lag(data$soc_factor) + lag(data$soc_factor,2) + lag(data$soc_factor,3)),
+    lag4 = ARIMA(depression_factor ~ phy_complain + phy_chanegable + phy_physact +  lag(data$soc_factor) + lag(data$soc_factor,2) + lag(data$soc_factor,3) + lag(data$soc_factor,4)),
+    lag5 = ARIMA(depression_factor ~ phy_complain + phy_chanegable + phy_physact +  lag(data$soc_factor) + lag(data$soc_factor,2) + lag(data$soc_factor,3) + lag(data$soc_factor,4) + lag(data$soc_factor,5)),
+    lag6 = ARIMA(depression_factor ~ phy_complain + phy_chanegable + phy_physact +  lag(data$soc_factor) + lag(data$soc_factor,2) + lag(data$soc_factor,3) +  lag(data$soc_factor,4) + lag(data$soc_factor,5) + lag(data$soc_factor,6)),
+    lag7 = ARIMA(depression_factor ~ phy_complain + phy_chanegable + phy_physact +  lag(data$soc_factor) + lag(data$soc_factor,2) + lag(data$soc_factor,3) + lag(data$soc_factor,4) + lag(data$soc_factor,5) + lag(data$soc_factor,6) + lag(data$soc_factor,7)),
+    lag8 = ARIMA(depression_factor ~ phy_complain + phy_chanegable + phy_physact +  lag(data$soc_factor) + lag(data$soc_factor,2) + lag(data$soc_factor,3) + lag(data$soc_factor,4) + lag(data$soc_factor,5) + lag(data$soc_factor,6) + lag(data$soc_factor,7) + lag(data$soc_factor,8)),
+    lag9 = ARIMA(depression_factor ~ phy_complain + phy_chanegable + phy_physact +  lag(data$soc_factor) + lag(data$soc_factor,2) + lag(data$soc_factor,3) + lag(data$soc_factor,4) + lag(data$soc_factor,5) + lag(data$soc_factor,6) + lag(data$soc_factor,7) + lag(data$soc_factor,8) + lag(data$soc_factor,9)),
+    lag10 = ARIMA(depression_factor ~ phy_complain + phy_chanegable + phy_physact +  lag(data$soc_factor) + lag(data$soc_factor,2) + lag(data$soc_factor,3) + lag(data$soc_factor,4) + lag(data$soc_factor,5) + lag(data$soc_factor,6) + lag(data$soc_factor,7) + lag(data$soc_factor,8) + lag(data$soc_factor,9) + lag(data$soc_factor,10)),
+    lag11 = ARIMA(depression_factor ~ phy_complain + phy_chanegable + phy_physact +  lag(data$soc_factor) + lag(data$soc_factor,2) + lag(data$soc_factor,3) + lag(data$soc_factor,4) + lag(data$soc_factor,5) + lag(data$soc_factor,6) + lag(data$soc_factor,7) + lag(data$soc_factor,8) + lag(data$soc_factor,9) + lag(data$soc_factor,10) + lag(data$soc_factor,11)),
+    lag12 = ARIMA(depression_factor ~ phy_complain + phy_chanegable + phy_physact +  lag(data$soc_factor) + lag(data$soc_factor,2) + lag(data$soc_factor,3) + lag(data$soc_factor,4) + lag(data$soc_factor,5) + lag(data$soc_factor,6) + lag(data$soc_factor,7) + lag(data$soc_factor,8) + lag(data$soc_factor,9) + lag(data$soc_factor,10) + lag(data$soc_factor,11) + lag(data$soc_factor,12)),
+    lag13 = ARIMA(depression_factor ~ phy_complain + phy_chanegable + phy_physact +  lag(data$soc_factor) + lag(data$soc_factor,2) + lag(data$soc_factor,3) + lag(data$soc_factor,4) + lag(data$soc_factor,5) + lag(data$soc_factor,6) + lag(data$soc_factor,7) + lag(data$soc_factor,8) + lag(data$soc_factor,9) + lag(data$soc_factor,10) + lag(data$soc_factor,11) + lag(data$soc_factor,12) + lag(data$soc_factor,13)),
+    lag14 = ARIMA(depression_factor ~ phy_complain + phy_chanegable + phy_physact +  lag(data$soc_factor) + lag(data$soc_factor,2) + lag(data$soc_factor,3) + lag(data$soc_factor,4) + lag(data$soc_factor,5) + lag(data$soc_factor,6) + lag(data$soc_factor,7) + lag(data$soc_factor,8) + lag(data$soc_factor,9) + lag(data$soc_factor,10) + lag(data$soc_factor,11) + lag(data$soc_factor,12) + lag(data$soc_factor,13) + lag(data$soc_factor,14) + lag(data$soc_factor,14))
 )
 ```
 
@@ -668,22 +703,29 @@ glance(fit)
 ```
 
 ```{r}
-plot(seq(0,7), glance(fit)$AICc, 
+plot(seq(0,14), glance(fit)$AICc, 
      col = "orange", type = "b", 
      ylab = "Information Criteria", xlab = "model",
      ylim = c(100, 220))
-lines(seq(0,7), glance(fit)$BIC, col = "blue", type = "b")
+lines(seq(0,14), glance(fit)$BIC, col = "blue", type = "b")
 legend("topright", c("AICc","BIC"), col = c("orange","blue"), lty = 1)
 ```
+
+Those are the values of the model without the lagged soc_factor AIC=76.97   AICc=77.46   BIC=101.28. With the lagged soc_factor we only get values worse then the previous model. 
+My final chosen model is an ARIMA(0,1,3).
+
+So we have no autoregressive component, one degree of first differencing and a order of three towards the moving average part. Without a seasonal part of the model. So my model uses instead of past values of the forecast variable in a regression, it uses past forecast errors in a regression. The model also used differencing to stabilise the mean of the time series by removing changes in the level of the time series, which concludes into eliminating/reducing trend and seasonality.
 
 ## 3.3 Conclusion and critical reflection
 
 $\blacktriangleright$ Based on the result of your analysis, how would you answer your causal research question?
 
-The basic idea behind Granger Causality in this example is the following. Can the patient's overall depression quotient be better predicted by taking into account past values based on social events. Disappointingly, the AIC and BIC values do not show any indication that the prediction is improved by taking the social component into account. Therefore, I have to conclude that in this example all signs show that the social factor does not Granger-cause the depression factor. 
+Based on my analysis, the model with the lagged soc_factor did worse concerning the values for AICc and BIC than the model without it. Regarding my understanding of a Granger Causality, the model with the lagged values must have a better AICc and BIC or, in other words, must be better in predicting the correct values. 
+
+Regarding a little alternated question with the same meaning: "Can the patients mood be better predicted by taking into account past values of social experiences?" can now be answered. Disappointingly no, the AIC and BIC values do not indicate that the prediction is improved by taking the social component into account. Therefore, I have to conclude that all signs show that the social factor does not Granger-cause the depression factor in this example. 
 
 $\blacktriangleright$ Making causal conclusions on the basis of your analysis is reliant on a number of assumptions. Pick a single assumption that is necessary in the approach you chose. Discuss the plausibility and possible threats to the validity of this assumption in your specific setting (\< 75 words)
 
-To make a statement as strong as "this is not a Causal Reason", one would have to be sure that all the other variables are observed and controlled for or at least not misleadingly influential - no confounders. Especially in a such a complex domain the human brain, so many hidden processes can be involved. Nevertheless, if I wanted to be confident, I could have assumed Sufficiency.
+To make a statement as strong as "this is not a Causal Reason", one would have to be sure that all the other variables are observed and controlled for or at least not misleadingly influential - no confounders. Especially in such a complex domain as the human brain, many hidden processes can be involved. Therefore, if I wanted to be certain about my statement, I could have assumed Sufficiency. Additionally, I imputed most of the data of soc_factor. This might also have biased my results.
 
 ------------------------------------------------------------------------
